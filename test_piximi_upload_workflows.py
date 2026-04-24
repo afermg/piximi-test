@@ -55,94 +55,50 @@ def open_new_project(page):
     page.wait_for_timeout(3000)
 
 def upload_images_via_open(page, file_paths):
-    """Upload images using the Open > Image submenu in the sidebar.
+    """Upload images using Open > Image > New Image menu path.
 
-    The "Open" button shows a submenu with: Project, Image, Annotation.
-    Clicking "Image" may show a further submenu or directly open a file chooser.
+    Flow: Click "Open" -> Click "Image" menuitem -> "New Image" submenu appears.
+    "New Image" is a <label> linked to a hidden <input type="file" accept="image/*,.dcm">.
+    We set files on that hidden input directly after triggering the menu.
     Returns True if upload succeeded.
     """
     try:
-        # Step 1: Click "Open" in the sidebar to show submenu
-        open_btn = page.locator("div").filter(has_text=re.compile(r"^Open$")).first
-        if not open_btn.is_visible():
-            open_btn = page.get_by_text("Open", exact=True).first
-        open_btn.click()
+        # Step 1: Click "Open" in the sidebar
+        page.click("text=Open", timeout=3000)
+        page.wait_for_timeout(800)
+
+        # Step 2: Click "Image" menuitem (this opens the submenu, not hover)
+        page.locator("[role='menuitem']:has-text('Image')").click()
         page.wait_for_timeout(1000)
 
-        # Step 2: Click "Image" in the submenu
-        # Then expect a file chooser from the Image submenu
-        image_menu = page.get_by_text("Image", exact=True)
-        if image_menu.count() > 0:
-            # Hover to open submenu (may have further options)
-            image_menu.first.hover()
-            page.wait_for_timeout(500)
-            screenshot(page, "open_image_submenu")
+        # Step 3: The hidden file input should now exist in the DOM
+        # Set files directly on the hidden input (accept="image/*,.dcm")
+        file_input = page.query_selector("input[type='file'][accept*='image']")
+        if file_input:
+            log(f"  Found hidden file input, setting files...")
+            file_input.set_input_files(file_paths)
+            page.wait_for_timeout(5000)
+            # Close any remaining menu by pressing Escape
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(1000)
+            return True
 
-            # Try to trigger file chooser by clicking
-            try:
-                with page.expect_file_chooser(timeout=5000) as fc_info:
-                    image_menu.first.click()
-                file_chooser = fc_info.value
-                file_chooser.set_files(file_paths)
-                page.wait_for_timeout(5000)
-                return True
-            except Exception as e:
-                log(f"  Direct Image click didn't trigger filechooser: {e}")
-
-            # Maybe clicking Image opened a further submenu
-            page.wait_for_timeout(500)
-            screenshot(page, "open_image_submenu2")
-
-            # Look for submenu options like "From Computer", "Local", etc.
-            submenu_items = page.evaluate("""() => {
-                const items = document.querySelectorAll('[role="menuitem"], [role="menu"] *, [class*="MenuItem"], li');
-                return Array.from(items).filter(i => i.offsetParent !== null)
-                    .map(i => i.textContent.trim().substring(0, 60));
-            }""")
-            log(f"  Submenu items after Image hover: {json.dumps(submenu_items[:10])}")
-
-            # Try clicking any visible submenu item that might lead to upload
-            for kw in ['Computer', 'Local', 'Upload', 'File', 'Browse']:
-                try:
-                    sub_item = page.get_by_text(kw, exact=False).first
-                    if sub_item.is_visible():
-                        with page.expect_file_chooser(timeout=5000) as fc_info:
-                            sub_item.click()
-                        file_chooser = fc_info.value
-                        file_chooser.set_files(file_paths)
-                        page.wait_for_timeout(5000)
-                        return True
-                except:
-                    pass
-
-            # If there's no further submenu, try all visible menu items
-            menu_items = page.query_selector_all("[role='menuitem']")
-            for item in menu_items:
-                text = (item.text_content() or "").strip()
-                if item.is_visible() and text:
-                    log(f"  Trying menuitem: '{text}'")
-                    try:
-                        with page.expect_file_chooser(timeout=3000) as fc_info:
-                            item.click()
-                        file_chooser = fc_info.value
-                        file_chooser.set_files(file_paths)
-                        page.wait_for_timeout(5000)
-                        return True
-                    except:
-                        # Re-open the menu
-                        open_btn.click()
-                        page.wait_for_timeout(500)
-                        image_menu.first.hover()
-                        page.wait_for_timeout(500)
+        # Fallback: click "New Image" label which triggers file chooser
+        with page.expect_file_chooser(timeout=5000) as fc_info:
+            page.locator("[role='menuitem']:has-text('New Image')").click()
+        file_chooser = fc_info.value
+        file_chooser.set_files(file_paths)
+        page.wait_for_timeout(5000)
+        return True
 
     except Exception as e:
-        log(f"  Open > Image approach failed: {e}")
+        log(f"  Open > Image > New Image failed: {e}")
 
-    # Fallback: look for any hidden file input that might have appeared
+    # Fallback: try finding any file input in the DOM
     try:
         file_inputs = page.query_selector_all("input[type='file']")
         if file_inputs:
-            log(f"  Found {len(file_inputs)} file input(s), using first one")
+            log(f"  Fallback: Found {len(file_inputs)} file input(s), using first one")
             file_inputs[0].set_input_files(file_paths)
             page.wait_for_timeout(5000)
             return True
